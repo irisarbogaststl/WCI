@@ -1,0 +1,368 @@
+---
+title: "Lucas 2000 Replication"
+output: html_notebook
+---
+
+#############################################################################################
+# Project: FOMC 2019
+# Economist: Ravi
+# RA: Brian Reinbold
+# Last Edited: 11/12/2019
+#
+
+#############################################################################################
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+
+rm(list=ls())
+
+# directories
+path <- "G:/Research_Analyst/Reinbold/Ravi/FOMC 2019"
+input_dir <- "/Data/"
+output_dir <- "/Output/"
+
+```
+
+```{r}
+### read in data ###
+raw <- read_excel(paste0(path, input_dir, "Lucas Data.xlsx"),
+                  sheet = "Data"
+                  )
+colnames(raw) <- c("year", "gdp", "gdpDef", "m1", "rate")
+```
+
+```{r}
+
+### last year of subset ###
+# Lucas 2000 ends in 1994
+yBeg <- 1900
+yEnd <- 1994
+
+# filter problem areas identified in Ireland 2009
+filterProb = FALSE
+
+```
+
+
+```{r}
+### Clean Data ###
+df <- raw %>%
+  mutate(., gdp = gdp / 1e3) %>%        # convert from millions to billions
+  mutate(., m1_gdp = m1 / gdp) %>%      # ratio of M1 to nominal GDP
+  filter(., year <= yEnd) %>%           # select when to end 
+  # identify problem areas in Ireland 2009
+  mutate(., dotColor = if_else(year >= 1945 & year <= 1949,     
+                               "1945-1949",
+                               if_else(year >= 1979 & year <= 1982,
+                                       "1979-1982",
+                                       "Data"
+                                       )
+                               )
+         )
+
+if (filterProb == TRUE) {
+  df <- df %>%
+    filter(., dotColor == "Data")
+}
+```
+
+
+```{r}
+### Parameters ###
+
+# for Log-Log Demand Function
+eta <- c(0.3, 0.5, 0.7)
+
+# for semi-log demand functions
+xi <- c(5, 7, 9)
+
+# calculate geometric means
+geomMean_m <- exp(mean(log(df$m1_gdp)))
+geomMean_r <- exp(mean(log(df$rate)))
+```
+
+```{r}
+### Figure 1: Line Plot ###
+
+if (filterProb == FALSE) {
+  
+  g <- ggplot(data = df, aes(x = year)) +
+    theme_bw(20) +
+    geom_line(aes(y = m1_gdp, color = "M1 to GDP Ratio"), size = 1.5) +
+    geom_line(aes(y = rate * 4, color = "Interest Rate"), size = 1.5) +
+    scale_y_continuous(sec.axis = sec_axis(~./4, 
+                                           name = "Interest Rate",
+                                           breaks = seq(0, 0.16, by = 0.02)
+                                           ),
+                       breaks = seq(0, 0.6, by = 0.1)
+                       ) +
+    scale_x_continuous(breaks = seq(1900, 2010, by = 10),
+                       expand = c(0, 1)
+                       ) +
+    labs(x = "",
+         y = "M1 to GDP Ratio"
+         ) +
+    theme(legend.title = element_blank(),
+          legend.position = c(0.2, 0.9)
+          )
+    
+  print(g)
+  
+  # Export
+  # ggsave(filename = paste0(path, output_dir, "Figure 1_", yEnd, ".png"),
+  #        plot     = g,
+  #        width    = 12,
+  #        height   = 8,
+  #        units    = "in"
+  #        )
+
+}
+```
+
+```{r}
+### log-log Demand Function Calculations ###
+
+### select parameter A such that curve passes thorough geometric mean of two series
+A <- rep(as.numeric(NA), times = 3)         # initialze empty matrix to hold values
+
+# find value of A for each eta
+for (i in 1:length(eta)) {
+  A[i] <- geomMean_m / (geomMean_r ^ (-eta[i]))
+}
+
+### Calc values for log-log demand for each eta
+loglogCurves_df <- data.frame(rate = seq(0, 0.16, by = 0.001)) # intialize x-value for curves
+for (i in 1:length(eta)) {
+  
+  # function of log-log demand to be overlaid on plots
+  loglogCurves_df[[paste0("logLogDemand_eta_", eta[i])]] <- (loglogCurves_df$rate ^ (-eta[i])) * A[i]
+  
+  # fitted log-log demand curve of data
+  df[[paste0("fitted_logLogDemand_eta_", eta[i])]] <- (df$rate ^ (-eta[i])) * A[i]
+}
+
+# dataframe for log-log demand curves reshaped and relabeled for ggplot
+loglogCurves_gdf <- loglogCurves_df %>%
+  arrange(., rate)
+colnames(loglogCurves_gdf)[2:4] <- paste0("Eta = ", eta)
+loglogCurves_gdf <- gather(loglogCurves_gdf, key = "parameter", value = "demand", -rate)
+
+```
+
+
+```{r}
+### semi-log Demand Function Calculations ###
+
+
+### select parameter B such that curve passes thorough geometric mean of two series
+B <- rep(as.numeric(NA), times = 3) 
+
+# find values of B for each xi
+for (i in 1:length(xi)) {
+   B[i] <- geomMean_m / exp(geomMean_r * -xi[i])
+}
+
+### Calc values for semi-log demand curves for each xi
+semiLogCurves_df <- data.frame(rate = seq(0, 0.16, by = 0.001))            # intialize x-value for curves
+for (i in 1:length(xi)) {
+  
+  # function of log-log demand to be overlaid on plots
+  semiLogCurves_df[[paste0("semiLogDemand_xi_", xi[i])]] <- exp(semiLogCurves_df$rate * -xi[i]) * B[i]
+  
+  # fitted log-log demand curve of data
+  df[[paste0("fitted_semiLogDemand_xi_", xi[i])]] <- exp(df$rate * -xi[i]) * B[i]
+}
+
+# dataframe for semi-log demand curves for ggplot
+semiLogCurves_gdf <- semiLogCurves_df %>%
+  arrange(., rate)
+colnames(semiLogCurves_gdf)[2:4] <- paste0("Xi = ", xi)
+semiLogCurves_gdf <- gather(semiLogCurves_gdf, key = "parameter", value = "demand", -rate)
+
+
+```
+
+
+
+```{r}
+
+graph_scatter <- function(data_df, curves_df, title) {
+  
+  g <- ggplot() +
+    theme_bw(20) + 
+    geom_point(data = data_df, aes(x = rate, y = m1_gdp)) +
+    # this add color to problem areas
+    # geom_point(data = data_df, aes(x = rate, y = m1_gdp, fill = dotColor), shape = 21) +
+    geom_line(data = curves_df, aes(x = rate, y = demand, color = parameter)) +
+    scale_x_continuous(breaks = seq(0, 0.16, by = 0.02), 
+                       limits = c(0, 0.16),
+                       expand = c(0, 0.0025)
+                       ) +
+    scale_y_continuous(breaks = seq(0.05, 0.55, by = 0.05), 
+                       limits = c(0.05, 0.55),
+                       expand = c(0, 0.01)
+                       ) +
+  # scale_fill_manual(values = c("1945-1949" = "red",
+  #                              "1979-1982" = "green",
+  #                              "Data"      = "black"),
+  #                   name = "",
+  #                   aesthetics = "fill"
+  #                   ) +
+      # scale_fill_manual(values = c("red", "green", "black"),
+      #               name = ""
+      #               ) +
+    theme(legend.title = element_blank()
+          ) +
+    ggtitle(title) 
+  
+  if (filterProb == TRUE) {
+    g + labs(x   = "Interest Rate",
+         y       = "M1 to GDP Ratio",
+         caption = "Problem Years Removed"
+         )
+    tFilt <- "_filtered"
+  } else {
+    g + labs(x = "Interest Rate",
+             y = "M1 to GDP Ratio"
+             )
+    tFilt <- ""
+  }
+    
+  
+  # Export
+  ggsave(filename = paste0(path, output_dir, title, tFilt, ".png"),
+         plot     = g,
+         width    = 12,
+         height   = 8,
+         units    = "in"
+         )
+  
+  return(g)
+}
+
+
+
+graph_scatter(data_df   = df, 
+              curves_df = loglogCurves_gdf,
+              title     = paste0("Log-Log Money Demand ", yBeg, " - ", yEnd)
+              ) 
+graph_scatter(data_df   = df, 
+              curves_df = semiLogCurves_gdf,
+              title     = paste0("Semi-Log Money Demand ", yBeg, " - ", yEnd)
+              )
+```
+
+```{r}
+### Sum of Residuals^2 of Demand Curves ###
+resid_df <- df %>%
+  mutate_at(., .vars = vars(contains("fitted")),
+               .funs = list(
+                 residual = ~(. - m1_gdp)
+               )
+            ) %>%
+  mutate_at(., .vars = vars(contains("residual")),
+               .funs = list(
+                 sq = ~(. ^ 2)
+               )
+            ) %>%
+  summarize_at(., .vars = vars(contains("residual_sq")),
+                  .funs = sum
+  ) %>%
+  gather(key = "variable", value = "value") %>%
+  separate(., col  = variable, 
+              into = c("fit", "Demand", "Parameter", "elasticity", "resid", "sq"),
+              sep  = "_"
+           ) %>%
+  select(., Demand, Parameter, elasticity, value)
+
+```
+
+
+```{r}
+### Calculate Welfare Cost of Autarky ###
+
+# find index of elasticity of best fitting demand curve
+idx_df <- resid_df %>%
+  group_by(., Parameter) %>%
+  summarise(., idx = which.min(value)) 
+
+etaidx <- idx_df[[1, 2]]
+xiidx <- idx_df[[2, 2]]
+
+
+# Log-Log Demand
+a <- A[[etaidx]]
+e <- eta[[etaidx]]
+a <- A[[2]]
+e <- eta[[2]]
+# make welfare function per parametrization
+welfare_loglog <- function(r) {
+  a * (e / (1-e)) * r^(1-e)
+}
+welfare_loglog(.06)
+
+# Semi-Log Demand
+b <- B[[xiidx]]
+x <- xi[[xiidx]]
+# b <- B[[2]]
+# x <- xi[[2]]
+# make welfare function per parametrization
+welfare_semilog <- function(r) {
+  (b / x)*(1 - (1 + (x*r))*exp(-x*r))
+}
+welfare_semilog(.06)
+
+
+# log-log
+welfareCost_loglog_df <- data.frame(rate = seq(0, 0.16, by = 0.001)) 
+welfareCost_loglog_df$parameter <- e
+welfareCost_loglog_df$type <- "Log-Log Demand"
+welfareCost_loglog_df$wc<- welfare_loglog(r = welfareCost_loglog_df[["rate"]])
+welfareCost_loglog_df$wc_minus3 <- 
+  welfare_loglog(r = welfareCost_loglog_df[["rate"]]) - welfare_loglog(r = 0.03)
+
+# semi-log
+welfareCost_semilog_df <- data.frame(rate = seq(0, 0.16, by = 0.001)) 
+welfareCost_semilog_df$parameter <- x
+welfareCost_semilog_df$type <- "Semi-Log Demand"
+welfareCost_semilog_df$wc<- welfare_semilog(r = welfareCost_semilog_df[["rate"]])
+welfareCost_semilog_df$wc_minus3 <- 
+  welfare_semilog(r = welfareCost_semilog_df[["rate"]]) - welfare_semilog(r = 0.03)
+
+welfare_cost_df <- bind_rows(welfareCost_loglog_df, welfareCost_semilog_df)
+rm(welfareCost_loglog_df, welfareCost_semilog_df)
+
+graphWC <- function(y) {
+  ggplot() +
+    theme_bw(20) + 
+    geom_line(data = welfare_cost_df, 
+              aes(x = rate, y = !!sym(y), color = type),
+              size = 1.5) +
+    scale_x_continuous(breaks = seq(0, 0.16, by = 0.02), 
+                       limits = c(0, 0.16),
+                       expand = c(0, 0.0025)
+                       ) +
+    scale_y_continuous(breaks = scales::pretty_breaks(n = 8)
+                       ) +
+    theme(legend.title    = element_blank(),
+          legend.position = c(0.75, 0.2)
+          ) +
+    ggtitle("Inflation and Welfare") +
+    labs(x = "Rate",
+         y = "Fraction of Income",
+         caption = paste0("Eta = ", e, " and xi = ", x)
+         )
+}
+
+graphWC(y = "wc")
+graphWC(y = "wc_minus3")
+
+
+wc_table <- welfare_cost_df %>%
+  filter(., rate %in% seq(0.01, 0.16, by = 0.01))
+```
+
+

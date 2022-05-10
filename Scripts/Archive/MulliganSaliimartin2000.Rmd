@@ -1,0 +1,135 @@
+---
+title: "SDA 1989"
+output: html_notebook
+---
+
+#############################################################################################
+# Project: FOMC 2019
+# Economist: Ravi
+# RA: Brian Reinbold
+# Last Edited: 11/12/2019
+#
+
+#############################################################################################
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+
+rm(list=ls())
+
+# directories
+path <- "G:/Research_Analyst/Reinbold/Ravi/FOMC 2019"
+input_dir <- "/Data/SCF/"
+output_dir <- "/Output/"
+```
+
+
+
+```{r}
+# raw <- read_excel(paste0(path, input_dir, "SDA 1989 SCF.xlsx"))
+raw <- read_csv(paste0(path, input_dir, "SDA 1989-2016 SCF.txt"))
+
+```
+
+
+```{r}
+sum(raw$INCOME == 0)
+```
+
+```{r}
+### Replicate Table 2 ###
+df_1989 <- raw %>%
+  filter(., YEAR == 1989) %>%
+  mutate(., m = CHECKING + SAVING,
+            interestBearingAssets = CDS + MMA + STOCKS + BOND + STMUTF
+         ) %>%
+  mutate(., finAssets = m + interestBearingAssets) %>%
+  mutate_at(., .vars = c("m", "finAssets", "INCOME"), 
+                ~(. * CPI_DEFL)
+            ) %>%
+  filter(., finAssets != 0) %>%           # eliminate households w/o financial assets
+  filter(., INCOME != 0)  %>%             # eliminate households with 0 income
+  mutate(., log_income = log(INCOME),
+            log_A      = log(finAssets),
+            m_A        = m / finAssets
+         ) %>%
+  select(., finAssets, log_A, m, m_A, INCOME, log_income) %>%
+  gather(., key = "variable", value = "value") %>%
+  group_by(., variable) %>%
+  summarise(., Mean   = mean(value),
+               SD     = sd(value),
+               Median = median(value),
+               Min    = min(value),
+               Max    = max(value)
+               )
+print(df_1989)
+```
+
+```{r}
+df <- raw %>%
+  mutate(., m = CHECKING + SAVING,
+            interestBearingAssets = CDS + MMA + STOCKS + BOND + STMUTF
+         ) %>%
+  mutate(., finAssets = m + interestBearingAssets) %>%
+  # mutate_at(., .vars = c("m", "finAssets", "INCOME"), 
+  #               ~(. * CPI_DEFL)
+  #           ) %>%
+  filter(., finAssets != 0) %>%           # eliminate households w/o financial assets
+  filter(., INCOME != 0)  %>%             # eliminate households with 0 income
+  mutate(., log_income = log(INCOME),
+            log_A      = log(finAssets),
+            m_A        = m / finAssets
+         ) 
+```
+
+
+```{r}
+df_summary <- df %>%
+  select(., YEAR, finAssets, log_A, m, m_A, INCOME, log_income) %>%
+  gather(., key = "variable", value = "value", -YEAR) %>%
+  group_by(., YEAR, variable) %>%
+  summarise(., Mean   = mean(value),
+               SD     = sd(value),
+               Median = median(value),
+               Min    = min(value),
+               Max    = max(value)
+               ) %>%
+  # labels for graphs
+  mutate(., glab = if_else(variable == "finAssets",
+                           "Financial Assets",
+                           if_else(variable == "INCOME",
+                                   "Household Income",
+                                   if_else(variable == "log_A",
+                                           "Log of Financial Assets",
+                                           if_else(variable == "log_income",
+                                                   "Log of Income",
+                                                   if_else(variable == "m",
+                                                           "Monetary Assets",
+                                                           "Money as a Fraction of Assets"
+                                                           )
+                                                   )
+                                           )
+                                   )
+                           )
+         )
+```
+
+```{r}
+for (v in c("Mean", "SD", "Median")) {
+  g <- ggplot(data = df_summary, aes(x = YEAR, y = !!sym(v))) +
+    theme_bw() +
+    geom_bar(stat = "identity", fill = "dodgerblue2") +
+    facet_wrap(~ glab, 
+               scales = "free_y"
+               ) +
+    scale_x_continuous(breaks = seq(1989, 2016, by = 3)) +
+    scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+    labs(x = "")
+  
+  print(g)
+}
+```
+

@@ -1,0 +1,213 @@
+---
+title: "Consumption Expenditure by Income Quintitle"
+#output: html_notebook
+---
+
+#############################################################################################
+# Project: Consumption Expenditure
+# Economist: Ravi
+# RA: Brian Reinbold
+# Last Edited: 1/6/2019
+#
+
+#############################################################################################
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+
+rm(list=ls())
+
+# directories
+path <- "G:/Research_Analyst/Reinbold/Ravi/Consumption Expenditure"
+input_dir <- "/Data/"
+output_dir <- "/"
+
+```
+
+
+```{r}
+
+######################################### load & clean data ######################################### 
+
+# sheet names that hold consumption expenditure by income quintile
+consSheets <- c("All", as.character(seq(1, 5, by = 1)))
+
+# load and clean consumption expenditure by income quintile data
+rawCons <- lapply(consSheets, function(s) {
+  df <- read_excel(path  = paste0(path, input_dir, "Consumption Expenditure by Income Quintile.xlsx"), 
+                   sheet = s,
+                   skip  = 11
+  )
+  df <- df %>%
+    select(., 1, 4) %>%                           # select only first and fourth column
+    mutate_if(., is.character, as.numeric)        # make sure all cols are numeric
+  
+  colnames(df) <- c("year", s)                    # rename cols
+  
+  return(df)
+}
+)
+
+# read in pce data
+pce_df <- read_excel(path    = paste0(path, input_dir, "Consumption Expenditure by Income Quintile.xlsx"), 
+                   sheet     = "PCE",
+                   skip      = 3,
+                   col_names = FALSE
+  )
+colnames(pce_df) <- c("year", "pce")                       # rename cols
+pce_df <- mutate_if(pce_df, is.character, as.numeric)      # make sure all cols are numeric
+
+
+```
+
+```{r}
+# Join all quintiles dfs together
+nominal_df <- reduce(rawCons, full_join)
+
+# rename columns
+colnames(nominal_df)[3:ncol(nominal_df)] <- c("First", "Second", "Third", "Fourth", "Fifth")
+
+# clean data and do calcs
+consExp_df <- nominal_df %>%
+  left_join(., pce_df) %>%                                                        # merge pce index
+  mutate_at(., .vars = c("All", "First", "Second", "Third", "Fourth", "Fifth"),   # make real
+               .funs = list(
+                 ~((. / pce) * 100)
+                 )
+            ) %>%
+  select(., -pce) %>%                                                             # drop pce col
+  gather(., key = "Quintile", value = "consExp", -year) %>%                       # make long by quintile
+  mutate(., Quintile = factor(Quintile,                                           # make quintile into an ordered factor 
+                              levels  = c("All", "First", "Second", "Third", "Fourth", "Fifth"),
+                              labels  = c("All", "First", "Second", "Third", "Fourth", "Fifth"),
+                              ordered = TRUE
+                              )
+         ) %>%
+  mutate(., log_consExp = log(consExp),
+                      t = year - 1983
+         ) %>%
+  group_by(., Quintile) %>% 
+  mutate(., pch = consExp / lag(consExp) - 1) %>%                                 # calc y/y percent change by quintile
+  ungroup(.) 
+
+```
+```{r}
+# make overlay line plot of level of consumption expenditure by quintile
+ggplot(data = consExp_df, aes(x = year, y = consExp, color = Quintile)) +
+  theme_bw() +
+  geom_line(size = 1.5) +
+  scale_color_brewer(type    = "qual",
+                     palette = 3
+                     ) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 8)) +
+  labs(x     = "",
+       y     = "2012 Dollars",
+       title = "Consumption Expenditure by Income Quintile"
+       )
+```
+
+```{r}
+# calc standard deviation of level of consumption expenditure by quintile
+consExp_df %>%
+  group_by(., Quintile) %>%
+  summarise(., SD = sd(consExp))
+```
+
+
+
+
+```{r}
+# fit linear trend to level by quintile
+reg_consExp_df <- consExp_df %>%
+  group_by(., Quintile) %>% 
+  do(model = lm(log_consExp ~ t, data = .)) %>%         # fit each model
+  broom::tidy(., model) %>%                                # add regression results to df
+  filter(., term == "t") %>%                            # only keep slope parameter
+  select(., Quintile, estimate) %>%
+  ungroup(.)
+
+# merge fitted values and residual to df  
+consExp_df <- consExp_df %>%
+  left_join(., reg_consExp_df) %>%
+  mutate(., betaT                 = t * estimate) %>%
+  mutate(., detrended_log_consExp = log_consExp - betaT) %>%
+  mutate(., detrended_consExp     = exp(detrended_log_consExp))
+```
+
+
+
+```{r}
+# plot Detrended Consumption Expenditure by Income Quintile
+
+ggplot(data = consExp_df, aes(x = year, y = detrended_consExp, color = Quintile)) +
+  theme_bw() +
+  geom_line(size = 1.5) +
+  scale_color_brewer(type    = "qual",
+                     palette = 3
+                     ) +
+  labs(x     = "2012 Dollars",
+       y     = "",
+       title = "Detrended Consumption Expenditure by Income Quintile"
+       )
+
+
+```
+
+```{r}
+# calc standard deviation residual of Consumption Expenditure by Income Quintile
+consExp_df %>%
+  group_by(., Quintile) %>%
+  summarise(., SD = sd(detrended_consExp))
+```
+
+
+```{r}
+# plot percent change of Consumption Expenditure by Income Quintile
+
+ggplot(data = consExp_df, aes(x = year, y = pch, color = Quintile)) +
+  theme_bw() +
+  geom_line(size = 1.5) +
+  scale_color_brewer(type    = "qual",
+                     palette = 3
+                     ) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x     = "",
+       y     = "",
+       title = "Percent Change of Consumption Expenditure by Income Quintile"
+       )
+
+
+```
+
+
+```{r}
+# calc standard deviation percent change of Consumption Expenditure by Income Quintile
+consExp_df %>%
+  group_by(., Quintile) %>%
+  summarise(., SD = sd(pch * 100, na.rm = TRUE))
+```
+
+
+```{r}
+consExp_df %>%
+  select(., Quintile, year, detrended_consExp) %>%
+  spread(key = "Quintile", value = detrended_consExp)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
